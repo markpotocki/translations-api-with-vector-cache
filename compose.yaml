@@ -1,0 +1,44 @@
+services:
+  embedapi:
+    build:
+      context: ./embed
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    
+  translateapi:
+    build:
+      context: ./translate
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"
+
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydatabase
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./docker/database:/docker-entrypoint-initdb.d
+
+  serviceapi:
+    build:
+      context: ./service
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8080"
+    depends_on:
+      - embedapi
+      - translateapi
+      - db
+    environment:
+      - EMBEDDING_URL=http://embedapi:8000/embed
+      - TRANSLATE_URL=http://translateapi:8000/translate
+      - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
+
+volumes:
+  db_data:
