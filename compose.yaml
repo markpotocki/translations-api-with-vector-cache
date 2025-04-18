@@ -3,15 +3,19 @@ services:
     build:
       context: ./embed
       dockerfile: Dockerfile
-    ports:
-      - "8001:8000"
+    environment:
+      - HF_HOME=/app/huggingface_cache
+    volumes:
+      - ./docker/huggingface_cache:/app/huggingface_cache
     
   translateapi:
     build:
       context: ./translate
       dockerfile: Dockerfile
-    ports:
-      - "8002:8000"
+    environment:
+      - XDG_CACHE_HOME=/app/argos_cache
+    volumes:
+      - ./docker/argos_cache:/app/argos_cache
 
   db:
     image: pgvector/pgvector:pg17
@@ -36,8 +40,8 @@ services:
       - translateapi
       - db
     environment:
-      - EMBEDDING_URL=http://embedapi:8000/embed
-      - TRANSLATE_URL=http://translateapi:8000/translate
+      - EMBEDDING_URL=embedapi:50051
+      - TRANSLATE_URL=translateapi:50051
       - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
 
 volumes:

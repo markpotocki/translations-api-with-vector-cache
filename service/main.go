@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,13 +13,22 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
+
+	embedpb "service/embeddingapi/service"
+	translatepb "service/translationsapi/service"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
-	client       *http.Client
-	conn         *pgx.Conn
-	embeddingURL string
-	translateURL string
+	conn            *pgx.Conn
+	embeddingURL    string
+	translateURL    string
+	embedConn       *grpc.ClientConn
+	translateConn   *grpc.ClientConn
+	translateClient translatepb.TranslatorClient
+	embedClient     embedpb.EmbedderClient
 )
 
 func init() {
@@ -28,9 +36,6 @@ func init() {
 	embeddingURL = getEnv("EMBEDDING_URL")
 	translateURL = getEnv("TRANSLATE_URL")
 	connStr := getEnv("DATABASE_URL")
-
-	// Initialize HTTP client
-	client = &http.Client{Timeout: 30 * time.Second}
 
 	// Connect to the database
 	var err error
@@ -43,10 +48,26 @@ func init() {
 	if err := pgxvec.RegisterTypes(context.TODO(), conn); err != nil {
 		log.Fatalf("Failed to register pgvector types: %v\n", err)
 	}
+
+	// Create grpc clients
+	translateConn, err = grpc.NewClient(translateURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Panicf("error connecting to translation service: %v", err)
+	}
+	translateClient = translatepb.NewTranslatorClient(translateConn)
+
+	embedConn, err = grpc.NewClient(embeddingURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Panicf("error connecting to embedding service: %v", err)
+	}
+	embedClient = embedpb.NewEmbedderClient(embedConn)
+	log.Println("Service initialized successfully")
 }
 
 func main() {
 	defer conn.Close(context.Background())
+	defer translateConn.Close()
+	defer embedConn.Close()
 
 	http.HandleFunc("/translate", handleTranslate)
 
@@ -130,36 +151,40 @@ func processTranslation(text, sourceLang, targetLang string) (string, error) {
 	return strings.Join(translations, ". "), nil
 }
 
-type embeddingResponse struct {
-	Embedding []float32 `json:"embedding"`
-}
-
 // getEmbedding fetches the embedding for a given text
 func getEmbedding(text string) ([]float32, error) {
-	request := map[string]string{"text": text}
-	response, err := postJSON[embeddingResponse](embeddingURL, request)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching embedding: %w", err)
-	}
-	return response.Embedding, nil
-}
+	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
+	defer cancel()
 
-type translationResponse struct {
-	Translation string `json:"translation"`
+	// Create the request for embedding
+	req := &embedpb.EmbeddingRequest{
+		Text: text,
+	}
+	res, err := embedClient.GenerateEmbedding(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("error calling embedding service: %w", err)
+	}
+
+	return res.Embedding, nil
 }
 
 // getTranslation fetches the translation for a given text
 func getTranslation(text, sourceLang, targetLang string) (string, error) {
-	request := map[string]string{
-		"text":            text,
-		"source_language": sourceLang,
-		"target_language": targetLang,
+	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
+	defer cancel()
+
+	req := &translatepb.TranslationRequest{
+		Text:           text,
+		SourceLanguage: sourceLang,
+		TargetLanguage: targetLang,
 	}
-	response, err := postJSON[translationResponse](translateURL, request)
+
+	res, err := translateClient.Translate(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("error fetching translation: %w", err)
+		return "", fmt.Errorf("error calling translation service: %w", err)
 	}
-	return response.Translation, nil
+
+	return res.Translation, nil
 }
 
 // getFromCache retrieves a cached translation from the database
@@ -195,31 +220,6 @@ func saveToCache(conn *pgx.Conn, sourceLang, targetLang string, embedding []floa
 }
 
 // Utility Functions
-
-// postJSON sends a POST request with a JSON body and decodes the response
-func postJSON[T any](url string, requestBody interface{}) (T, error) {
-	data, err := json.Marshal(requestBody)
-	if err != nil {
-		return *new(T), err
-	}
-
-	resp, err := client.Post(url, "application/json", bytes.NewBuffer(data))
-	if err != nil {
-		return *new(T), err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return *new(T), fmt.Errorf("failed request: %s", resp.Status)
-	}
-
-	var response T
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return *new(T), err
-	}
-
-	return response, nil
-}
 
 // recoverFromPanic handles panics and sends an error response
 func recoverFromPanic(w http.ResponseWriter) {

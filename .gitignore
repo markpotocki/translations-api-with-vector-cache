@@ -1,3 +1,7 @@
 # Python
 .venv/
 venv/
+
+# Cache files
+./docker/argos_cache/
+./docker/huggingface_cache/

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package embed;
+
+option go_package = "embeddingapi/service;embed";
+
+// The request message containing the text to generate an embedding for.
+message EmbeddingRequest {
+  string text = 1; // The text to embed.
+}
+
+// The response message containing the embedding as a list of floats.
+message EmbeddingResponse {
+  repeated float embedding = 1; // The embedding vector.
+}
+
+// The embedding service definition.
+service Embedder {
+  // Generates an embedding for the given text.
+  rpc GenerateEmbedding (EmbeddingRequest) returns (EmbeddingResponse);
+}

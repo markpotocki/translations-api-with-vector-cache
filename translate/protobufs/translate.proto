@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package translate;
+
+option go_package = "translationsapi/service;translate";
+
+// The request message containing the text to be translated and language details.
+message TranslationRequest {
+  string text = 1;              // The text to be translated.
+  string source_language = 2;   // The source language code (e.g., "en").
+  string target_language = 3;   // The target language code (e.g., "es").
+}
+
+// The response message containing the translated text.
+message TranslationResponse {
+  string translation = 1;       // The translated text.
+}
+
+// The translation service definition.
+service Translator {
+  // Translates text from the source language to the target language.
+  rpc Translate (TranslationRequest) returns (TranslationResponse);
+}
